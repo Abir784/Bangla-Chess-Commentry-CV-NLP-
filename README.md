@@ -154,4 +154,3 @@ The Bangla commentary module is planned but not implemented. Next steps:
 ## License
 
 This project uses Ultralytics YOLO which is licensed under AGPL-3.0.
->>>>>>> 19498f8 (read.md)
