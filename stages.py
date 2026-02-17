@@ -761,10 +761,499 @@ class StageRunner:
         except Exception as e:
             print(f"⚠️  Error: {e}")
             return False
+
+    # ========================================================================
+    # STAGE 8: System & Environment Check (YOLO/GPU)
+    # ========================================================================
+    def stage_8_system_check(self):
+        """Check Python, PyTorch, CUDA, Ultralytics, and dataset status"""
+        print("\n" + "="*80)
+        print("STAGE 8: System & Environment Check")
+        print("="*80)
+
+        import platform
+
+        print(f"Python Version: {sys.version}")
+        print(f"Platform: {platform.platform()}")
+        print(f"Processor: {platform.processor()}")
+
+        print("\n" + "="*80)
+        print("PyTorch INFORMATION")
+        print("="*80)
+
+        try:
+            import torch
+            print(f"PyTorch Version: {torch.__version__}")
+            print(f"CUDA Available: {torch.cuda.is_available()}")
+
+            if torch.cuda.is_available():
+                print(f"CUDA Version: {torch.version.cuda}")
+                print(f"cuDNN Version: {torch.backends.cudnn.version()}")
+                print(f"Number of GPUs: {torch.cuda.device_count()}")
+                for i in range(torch.cuda.device_count()):
+                    props = torch.cuda.get_device_properties(i)
+                    print(f"\n--- GPU {i} ---")
+                    print(f"Name: {torch.cuda.get_device_name(i)}")
+                    print(f"Compute Capability: {props.major}.{props.minor}")
+                    print(f"Total Memory: {props.total_memory / 1024**3:.2f} GB")
+            else:
+                print("GPU not available. Training will use CPU (slower).")
+        except ImportError as e:
+            print(f"PyTorch not installed: {e}")
+            return False
+
+        print("\n" + "="*80)
+        print("ULTRALYTICS YOLO")
+        print("="*80)
+        try:
+            import ultralytics
+            print(f"Ultralytics Version: {ultralytics.__version__}")
+            print("Ultralytics is installed ✓")
+        except ImportError:
+            print("Ultralytics NOT installed ✗")
+
+        print("\n" + "="*80)
+        print("DATASET INFORMATION")
+        print("="*80)
+        data_yaml = self.base_dir / "datasets" / "chess_yolo" / "data.yaml"
+        train_images = self.base_dir / "datasets" / "chess_yolo" / "images" / "train"
+        val_images = self.base_dir / "datasets" / "chess_yolo" / "images" / "val"
+        train_labels = self.base_dir / "datasets" / "chess_yolo" / "labels" / "train"
+        val_labels = self.base_dir / "datasets" / "chess_yolo" / "labels" / "val"
+
+        print(f"Data YAML: {data_yaml.exists()} {'✓' if data_yaml.exists() else '✗'}")
+        if data_yaml.exists():
+            print(f"  Path: {data_yaml}")
+
+        print(f"Train Images: {len(list(train_images.glob('*.jpg'))) if train_images.exists() else 0}")
+        print(f"Train Labels: {len(list(train_labels.glob('*.txt'))) if train_labels.exists() else 0}")
+        print(f"Val Images: {len(list(val_images.glob('*.jpg'))) if val_images.exists() else 0}")
+        print(f"Val Labels: {len(list(val_labels.glob('*.txt'))) if val_labels.exists() else 0}")
+
+        labels_file = self.base_dir / "labels.txt"
+        if labels_file.exists():
+            labels = [line.strip() for line in labels_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+            print(f"Number of Classes: {len(labels)}")
+            print(f"Classes: {', '.join(labels)}")
+
+        print("\n" + "="*80)
+        print("QUICK IMPORT TEST")
+        print("="*80)
+        try:
+            import torch
+            print(f"✓ PyTorch imported successfully: {torch.__version__}")
+            print(f"CUDA available: {torch.cuda.is_available()}")
+        except Exception as e:
+            print(f"✗ Failed to import PyTorch: {type(e).__name__}: {e}")
+            return False
+
+        return True
+
+    # ========================================================================
+    # STAGE 10: Prepare YOLO Dataset
+    # ========================================================================
+    def stage_10_prepare_yolo_dataset(self, labels_subdir=None, split_ratio=0.8, seed=42):
+        """Create train/val split and data.yaml from frame+label pairs"""
+        print("\n" + "="*80)
+        print("STAGE 10: Prepare YOLO Dataset")
+        print("="*80)
+
+        import random
+        import shutil
+
+        images_dir = self.base_dir / "preprocessed_frames"
+        if labels_subdir:
+            labels_dir = self.base_dir / "Annotations" / labels_subdir
+        else:
+            labels_dir = self.base_dir / "Annotations" / "labels_nlp_2026-02-10-11-44-39"
+
+        out_dir = self.base_dir / "datasets" / "chess_yolo"
+        images_train = out_dir / "images" / "train"
+        images_val = out_dir / "images" / "val"
+        labels_train = out_dir / "labels" / "train"
+        labels_val = out_dir / "labels" / "val"
+
+        if not images_dir.exists() or not labels_dir.exists():
+            print(f"❌ Required directory missing:\n  images: {images_dir}\n  labels: {labels_dir}")
+            return False
+
+        for p in [images_train, images_val, labels_train, labels_val]:
+            p.mkdir(parents=True, exist_ok=True)
+
+        labels_path = self.base_dir / "labels.txt"
+        if not labels_path.exists():
+            print(f"❌ labels.txt not found: {labels_path}")
+            return False
+        labels = [line.strip() for line in labels_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+        pairs = []
+        for label_file in labels_dir.glob("*.txt"):
+            image_file = images_dir / f"{label_file.stem}.jpg"
+            if image_file.exists():
+                pairs.append((image_file, label_file))
+
+        if not pairs:
+            print("❌ No matching image-label pairs found")
+            return False
+
+        pairs.sort(key=lambda x: x[0].name)
+        random.seed(seed)
+        random.shuffle(pairs)
+
+        split_idx = int(len(pairs) * split_ratio)
+        train_pairs = pairs[:split_idx]
+        val_pairs = pairs[split_idx:]
+
+        for image_file, label_file in train_pairs:
+            shutil.copy2(image_file, images_train / image_file.name)
+            shutil.copy2(label_file, labels_train / label_file.name)
+
+        for image_file, label_file in val_pairs:
+            shutil.copy2(image_file, images_val / image_file.name)
+            shutil.copy2(label_file, labels_val / label_file.name)
+
+        yaml_lines = [
+            f"path: {out_dir.as_posix()}",
+            "train: images/train",
+            "val: images/val",
+            "names:",
+        ]
+        for name in labels:
+            yaml_lines.append(f"  - {name}")
+        (out_dir / "data.yaml").write_text("\n".join(yaml_lines) + "\n", encoding="utf-8")
+
+        print(f"images: {len(pairs)}")
+        print(f"train: {len(train_pairs)}")
+        print(f"val: {len(val_pairs)}")
+        print(f"data.yaml: {out_dir / 'data.yaml'}")
+        return True
+
+    # ========================================================================
+    # STAGE 11: Train YOLO11
+    # ========================================================================
+    def stage_11_train_yolo11(self, model_weights="yolo11s.pt", epochs=30, imgsz=416, batch=4, workers=2):
+        """Train YOLO11 model"""
+        print("\n" + "="*80)
+        print("STAGE 11: Train YOLO11")
+        print("="*80)
+
+        from ultralytics import YOLO
+        import torch
+
+        data_yaml = self.base_dir / "datasets" / "chess_yolo" / "data.yaml"
+        output_dir = self.base_dir / "runs" / "detect"
+        if not data_yaml.exists():
+            print(f"❌ Dataset yaml not found: {data_yaml}")
+            return False
+
+        device = 0 if torch.cuda.is_available() else "cpu"
+        print(f"Using device: {'GPU' if device == 0 else 'CPU'}")
+
+        model = YOLO(model_weights)
+        model.train(
+            data=str(data_yaml),
+            epochs=epochs,
+            imgsz=imgsz,
+            batch=batch,
+            device=device,
+            workers=workers,
+            optimizer="AdamW",
+            lr0=0.01,
+            lrf=0.01,
+            momentum=0.937,
+            weight_decay=0.0005,
+            warmup_epochs=3,
+            warmup_momentum=0.8,
+            warmup_bias_lr=0.1,
+            hsv_h=0.015,
+            hsv_s=0.7,
+            hsv_v=0.4,
+            degrees=0.0,
+            translate=0.1,
+            scale=0.5,
+            shear=0.0,
+            perspective=0.0,
+            flipud=0.0,
+            fliplr=0.5,
+            mosaic=1.0,
+            mixup=0.0,
+            copy_paste=0.0,
+            amp=True,
+            cache=False,
+            pin_memory=False,
+            project=str(output_dir),
+            name="train_chess",
+            exist_ok=True,
+            pretrained=True,
+            verbose=True,
+            save=True,
+            save_period=10,
+            plots=True,
+            patience=50,
+            val=True,
+        )
+
+        metrics = model.val()
+        print(f"mAP50: {metrics.box.map50:.4f}")
+        print(f"mAP50-95: {metrics.box.map:.4f}")
+        return True
+
+    # ========================================================================
+    # STAGE 12: Train YOLOv8
+    # ========================================================================
+    def stage_12_train_yolov8(self, model_weights="yolov8s.pt", epochs=100, imgsz=640, batch=16, workers=8):
+        """Train YOLOv8 model"""
+        print("\n" + "="*80)
+        print("STAGE 12: Train YOLOv8")
+        print("="*80)
+
+        from ultralytics import YOLO
+        import torch
+
+        data_yaml = self.base_dir / "datasets" / "chess_yolo" / "data.yaml"
+        output_dir = self.base_dir / "runs" / "detect"
+        if not data_yaml.exists():
+            print(f"❌ Dataset yaml not found: {data_yaml}")
+            return False
+
+        device = 0 if torch.cuda.is_available() else "cpu"
+        print(f"Using device: {'GPU' if device == 0 else 'CPU'}")
+
+        model = YOLO(model_weights)
+        model.train(
+            data=str(data_yaml),
+            epochs=epochs,
+            imgsz=imgsz,
+            batch=batch,
+            device=device,
+            workers=workers,
+            optimizer="AdamW",
+            lr0=0.01,
+            lrf=0.01,
+            momentum=0.937,
+            weight_decay=0.0005,
+            warmup_epochs=3,
+            hsv_h=0.015,
+            hsv_s=0.7,
+            hsv_v=0.4,
+            degrees=0.0,
+            translate=0.1,
+            scale=0.5,
+            flipud=0.0,
+            fliplr=0.5,
+            mosaic=1.0,
+            mixup=0.0,
+            amp=True,
+            cache=True,
+            project=str(output_dir),
+            name="train_chess_v8",
+            exist_ok=True,
+            pretrained=True,
+            verbose=True,
+            save=True,
+            save_period=10,
+            plots=True,
+            patience=50,
+            val=True,
+        )
+
+        metrics = model.val()
+        print(f"mAP50: {metrics.box.map50:.4f}")
+        print(f"mAP50-95: {metrics.box.map:.4f}")
+        return True
+
+    # ========================================================================
+    # STAGE 13: Resume Training
+    # ========================================================================
+    def stage_13_resume_training(self, checkpoint_path=None):
+        """Resume training from checkpoint"""
+        print("\n" + "="*80)
+        print("STAGE 13: Resume Training")
+        print("="*80)
+
+        from ultralytics import YOLO
+        import torch
+
+        if checkpoint_path:
+            ckpt = Path(checkpoint_path)
+        else:
+            ckpt = self.base_dir / "runs" / "detect" / "train_chess" / "weights" / "last.pt"
+        if not ckpt.exists():
+            print(f"❌ Checkpoint not found: {ckpt}")
+            return False
+
+        device = 0 if torch.cuda.is_available() else "cpu"
+        model = YOLO(str(ckpt))
+        model.train(resume=True, device=device)
+        metrics = model.val()
+        print(f"mAP50: {metrics.box.map50:.4f}")
+        print(f"mAP50-95: {metrics.box.map:.4f}")
+        return True
+
+    # ========================================================================
+    # STAGE 14: Export Model
+    # ========================================================================
+    def stage_14_export_model(self, model_path=None, export_formats=None):
+        """Export trained YOLO model into selected formats"""
+        print("\n" + "="*80)
+        print("STAGE 14: Export YOLO Model")
+        print("="*80)
+
+        from ultralytics import YOLO
+
+        if model_path:
+            best_model = Path(model_path)
+        else:
+            best_model = self.base_dir / "runs" / "detect" / "train_chess" / "weights" / "best.pt"
+
+        if not best_model.exists():
+            print(f"❌ Model not found: {best_model}")
+            return False
+
+        model = YOLO(str(best_model))
+        formats = export_formats or ["onnx", "torchscript", "engine", "openvino", "tflite"]
+
+        for fmt in formats:
+            print(f"\nExporting: {fmt}")
+            try:
+                kwargs = {"format": fmt}
+                if fmt == "onnx":
+                    kwargs.update({"dynamic": True, "simplify": True})
+                if fmt in {"engine", "openvino"}:
+                    kwargs.update({"half": True})
+                if fmt == "engine":
+                    kwargs.update({"device": 0})
+                if fmt == "tflite":
+                    kwargs.update({"int8": False})
+                out = model.export(**kwargs)
+                print(f"✓ Success: {out}")
+            except Exception as e:
+                print(f"✗ Failed: {e}")
+
+        return True
+
+    # ========================================================================
+    # STAGE 15: Image Inference
+    # ========================================================================
+    def stage_15_image_inference(self, model_path=None, image_path=None, conf=0.25, iou=0.45):
+        """Run inference on one image and optionally on val images"""
+        print("\n" + "="*80)
+        print("STAGE 15: Image Inference")
+        print("="*80)
+
+        from ultralytics import YOLO
+
+        model_file = Path(model_path) if model_path else self.base_dir / "runs" / "detect" / "train_chess" / "weights" / "best.pt"
+        test_image = Path(image_path) if image_path else self.base_dir / "preprocessed_frames" / "frame_001.jpg"
+        output_dir = self.base_dir / "inference_results"
+        output_dir.mkdir(exist_ok=True)
+
+        if not model_file.exists():
+            print(f"❌ Model not found: {model_file}")
+            return False
+        if not test_image.exists():
+            print(f"❌ Image not found: {test_image}")
+            return False
+
+        model = YOLO(str(model_file))
+        results = model.predict(
+            source=str(test_image),
+            save=True,
+            save_txt=True,
+            save_conf=True,
+            conf=conf,
+            iou=iou,
+            project=str(output_dir),
+            name="inference",
+            exist_ok=True,
+            show_labels=True,
+            show_conf=True,
+            line_width=2,
+        )
+
+        print("\nDETECTION RESULTS")
+        for r in results:
+            boxes = r.boxes
+            print(f"Detected {len(boxes)} objects:")
+            for box in boxes:
+                cls = int(box.cls[0])
+                score = float(box.conf[0])
+                name = model.names[cls]
+                print(f"  - {name}: {score:.2%}")
+
+        return True
+
+    # ========================================================================
+    # STAGE 16: Video Inference
+    # ========================================================================
+    def stage_16_video_inference(self, model_path=None, source=None, out=None, conf=0.25, imgsz=640, vid_stride=1, max_frames=3000, no_show=True, display_scale=0.55):
+        """Run YOLO on video and write annotated output video"""
+        print("\n" + "="*80)
+        print("STAGE 16: Video Inference")
+        print("="*80)
+
+        import cv2
+        from ultralytics import YOLO
+
+        weights_path = Path(model_path) if model_path else self.base_dir / "runs" / "detect" / "train" / "weights" / "best.pt"
+        source_path = Path(source) if source else self.base_dir / "videos" / "chess.mp4"
+        out_dir = Path(out) if out else self.base_dir / "runs" / "detect" / "predict_custom"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        if not weights_path.exists():
+            print(f"❌ Weights not found: {weights_path}")
+            return False
+        if not source_path.exists():
+            print(f"❌ Video not found: {source_path}")
+            return False
+
+        model = YOLO(str(weights_path))
+        results_iter = model.predict(
+            source=str(source_path),
+            stream=True,
+            conf=conf,
+            imgsz=imgsz,
+            vid_stride=vid_stride,
+            save=False,
+        )
+
+        writer = None
+        video_out_path = out_dir / f"{source_path.stem}_pred.mp4"
+
+        try:
+            for idx, result in enumerate(results_iter, start=1):
+                if max_frames > 0 and idx > max_frames:
+                    break
+                annotated = result.plot()
+                if writer is None:
+                    height, width = annotated.shape[:2]
+                    fps = result.speed.get("fps", 25) or 25
+                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                    writer = cv2.VideoWriter(str(video_out_path), fourcc, fps, (width, height))
+                writer.write(annotated)
+                if not no_show:
+                    if display_scale != 1.0:
+                        disp_w = max(1, int(annotated.shape[1] * display_scale))
+                        disp_h = max(1, int(annotated.shape[0] * display_scale))
+                        preview = cv2.resize(annotated, (disp_w, disp_h), interpolation=cv2.INTER_AREA)
+                    else:
+                        preview = annotated
+                    cv2.imshow("YOLO Prediction", preview)
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
+        finally:
+            if writer is not None:
+                writer.release()
+            if not no_show:
+                cv2.destroyAllWindows()
+
+        print(f"Saved video: {video_out_path}")
+        return True
     
-    def run_stage(self, stage_num, video_path=None):
+    def run_stage(self, args):
         """Run a specific stage"""
-        
+
+        stage_num = args.stage
         stages = {
             1: ("Frame Extraction", self.stage_1_extract_frames),
             2: ("Board Detection", self.stage_2_board_detection),
@@ -773,23 +1262,56 @@ class StageRunner:
             5: ("Move Reconstruction", self.stage_5_move_reconstruction),
             6: ("Engine Analysis", self.stage_6_engine_analysis),
             7: ("Feature Engineering", self.stage_7_feature_engineering),
+            8: ("System Check", self.stage_8_system_check),
             9: ("Voice Synthesis", self.stage_9_voice_synthesis),
+            10: ("Prepare YOLO Dataset", self.stage_10_prepare_yolo_dataset),
+            11: ("Train YOLO11", self.stage_11_train_yolo11),
+            12: ("Train YOLOv8", self.stage_12_train_yolov8),
+            13: ("Resume Training", self.stage_13_resume_training),
+            14: ("Export Model", self.stage_14_export_model),
+            15: ("Image Inference", self.stage_15_image_inference),
+            16: ("Video Inference", self.stage_16_video_inference),
         }
-        
+
         if stage_num not in stages:
             print(f"❌ Stage {stage_num} not found. Available: {list(stages.keys())}")
             return False
-        
+
         stage_name, stage_func = stages[stage_num]
-        
+
         if stage_num == 1:
-            if not video_path:
+            if not args.video:
                 print(f"❌ Stage 1 requires --video parameter")
                 return False
-            return stage_func(video_path)
+            return stage_func(args.video)
         elif stage_num == 9:
-            text = "সাদা খেলোয়াড় ই-চার দিয়ে খেলা শুরু করছে"
+            text = args.text or "সাদা খেলোয়াড় ই-চার দিয়ে খেলা শুরু করছে"
             return stage_func(text)
+        elif stage_num == 10:
+            return stage_func(labels_subdir=args.labels_subdir, split_ratio=args.split_ratio, seed=args.seed)
+        elif stage_num == 11:
+            return stage_func(model_weights=args.model, epochs=args.epochs, imgsz=args.imgsz, batch=args.batch, workers=args.workers)
+        elif stage_num == 12:
+            return stage_func(model_weights=args.model, epochs=args.epochs, imgsz=args.imgsz, batch=args.batch, workers=args.workers)
+        elif stage_num == 13:
+            return stage_func(checkpoint_path=args.checkpoint)
+        elif stage_num == 14:
+            formats = [f.strip() for f in args.export_formats.split(",")] if args.export_formats else None
+            return stage_func(model_path=args.weights, export_formats=formats)
+        elif stage_num == 15:
+            return stage_func(model_path=args.weights, image_path=args.image, conf=args.conf, iou=args.iou)
+        elif stage_num == 16:
+            return stage_func(
+                model_path=args.weights,
+                source=args.source,
+                out=args.out,
+                conf=args.conf,
+                imgsz=args.imgsz,
+                vid_stride=args.vid_stride,
+                max_frames=args.max_frames,
+                no_show=args.no_show,
+                display_scale=args.display_scale,
+            )
         else:
             return stage_func()
 
@@ -803,11 +1325,12 @@ Examples:
   python stages.py --stage 1 --video videos/game.mp4    (Extract frames)
   python stages.py --stage 2                             (Board detection)
   python stages.py --stage 3                             (Piece recognition)
-  python stages.py --stage 4                             (FEN encoding)
-  python stages.py --stage 5                             (Move reconstruction)
-  python stages.py --stage 6                             (Stockfish analysis)
-  python stages.py --stage 7                             (Features)
-  python stages.py --stage 9                             (Voice synthesis)
+    python stages.py --stage 8                             (System check)
+    python stages.py --stage 10                            (Prepare YOLO dataset)
+    python stages.py --stage 11 --model yolo11s.pt         (Train YOLO11)
+    python stages.py --stage 14 --weights runs/detect/train_chess/weights/best.pt --export-formats onnx,torchscript
+    python stages.py --stage 15 --image preprocessed_frames/frame_001.jpg
+    python stages.py --stage 16 --source videos/chess.mp4 --weights runs/detect/train/weights/best.pt
   python stages.py --list                                (List available stages)
         """
     )
@@ -815,8 +1338,8 @@ Examples:
     parser.add_argument(
         "--stage",
         type=int,
-        choices=[1, 2, 3, 4, 5, 6, 7, 9],
-        help="Stage number to run (1, 2, 3, 4, 5, 6, 7, or 9)"
+        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+        help="Stage number to run"
     )
     parser.add_argument(
         "--video",
@@ -828,6 +1351,27 @@ Examples:
         action="store_true",
         help="List all available stages"
     )
+    parser.add_argument("--text", type=str, help="Input text (stage 9)")
+    parser.add_argument("--labels-subdir", type=str, help="Subdirectory under Annotations/ for YOLO labels (stage 10)")
+    parser.add_argument("--split-ratio", type=float, default=0.8, help="Train split ratio for dataset prep (stage 10)")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for dataset split (stage 10)")
+    parser.add_argument("--model", type=str, default="yolo11s.pt", help="Model weights for training stages (11/12)")
+    parser.add_argument("--epochs", type=int, default=30, help="Training epochs (11/12)")
+    parser.add_argument("--imgsz", type=int, default=416, help="Image size for train/inference")
+    parser.add_argument("--batch", type=int, default=4, help="Batch size for training (11/12)")
+    parser.add_argument("--workers", type=int, default=2, help="Data loader workers for training (11/12)")
+    parser.add_argument("--checkpoint", type=str, help="Checkpoint path for resume (stage 13)")
+    parser.add_argument("--weights", type=str, help="Model weight path for export/inference stages (14/15/16)")
+    parser.add_argument("--export-formats", type=str, help="Comma-separated formats for export (stage 14), e.g. onnx,torchscript")
+    parser.add_argument("--image", type=str, help="Image path for stage 15")
+    parser.add_argument("--source", type=str, help="Video source for stage 16")
+    parser.add_argument("--out", type=str, help="Output directory for stage 16")
+    parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold for inference")
+    parser.add_argument("--iou", type=float, default=0.45, help="IoU threshold for inference (stage 15)")
+    parser.add_argument("--vid-stride", type=int, default=1, help="Process every Nth frame (stage 16)")
+    parser.add_argument("--max-frames", type=int, default=3000, help="Maximum frames to process in stage 16")
+    parser.add_argument("--no-show", action="store_true", help="Disable OpenCV preview window for stage 16")
+    parser.add_argument("--display-scale", type=float, default=0.55, help="Preview scale factor for stage 16")
     
     args = parser.parse_args()
     
@@ -852,18 +1396,21 @@ Examples:
             5: ("Move Reconstruction", "Find move between two positions", "None"),
             6: ("Engine Analysis", "Analyze with Stockfish (requires download)", "Stockfish.exe"),
             7: ("Feature Engineering", "Create NLP-friendly features", "None"),
+            8: ("System Check", "Check Python/PyTorch/CUDA/YOLO/dataset readiness", "Installed dependencies"),
             9: ("Voice Synthesis", "Convert text to speech (optional)", "TTS model"),
+            10: ("Prepare YOLO Dataset", "Build train/val split and data.yaml", "Frames + labels + labels.txt"),
+            11: ("Train YOLO11", "Train YOLO11 model", "Dataset YAML + ultralytics"),
+            12: ("Train YOLOv8", "Train YOLOv8 model", "Dataset YAML + ultralytics"),
+            13: ("Resume Training", "Resume from last checkpoint", "Checkpoint file"),
+            14: ("Export Model", "Export trained model formats", "Trained best.pt"),
+            15: ("Image Inference", "Run single image inference", "Model + image"),
+            16: ("Video Inference", "Run video inference and save output", "Model + video"),
         }
         
         for num, (name, desc, req) in stages_info.items():
             print(f"\nStage {num}: {name}")
             print(f"  Description: {desc}")
             print(f"  Requires: {req}")
-        
-        print("\n" + "="*70)
-        print("GPU-REQUIRED STAGES (After PyTorch installation)")
-        print("="*70)
-        print("\nStage 8: Bangla NLP Commentary (mT5)")
         
         return
     
@@ -872,7 +1419,7 @@ Examples:
         return
     
     # Run stage
-    success = runner.run_stage(args.stage, args.video)
+    success = runner.run_stage(args)
     
     if success:
         print("\n" + "="*70)
