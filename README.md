@@ -91,9 +91,8 @@ Use `python stages.py --list` to see all stages. Core stages include:
 7. Feature engineering demo
 8. System and dependency check
 10. Prepare YOLO dataset
-11. Train YOLO11
-12. Train YOLOv8
-13. Resume training
+11. Train YOLO11 or 12. YOLOv8
+13. Resume training (if needed)
 14. Export model
 15. Image inference
 16. Video inference
@@ -143,39 +142,6 @@ datasets/chess_yolo/
 13. Q - White Queen
 14. K - White King
 
-## Model Options
-
-YOLO11:
-- yolo11n.pt (nano)
-- yolo11s.pt (small, recommended)
-- yolo11m.pt (medium)
-- yolo11l.pt (large)
-- yolo11x.pt (extra large)
-
-YOLOv8:
-- yolov8n.pt (nano)
-- yolov8s.pt (small)
-- yolov8m.pt (medium)
-- yolov8l.pt (large)
-- yolov8x.pt (extra large)
-
-## Troubleshooting
-
-Out of memory:
-- Lower `--batch`
-- Use smaller model
-- Reduce `--imgsz`
-
-Slow training:
-- Use GPU if available
-- Increase batch size within VRAM limits
-- Enable caching if memory allows
-
-Poor accuracy:
-- Verify label integrity
-- Increase epochs
-- Add more data
-
 ## NLP Status (Not Implemented Yet)
 
 The Bangla commentary module is planned but not implemented. Next steps:
@@ -184,10 +150,6 @@ The Bangla commentary module is planned but not implemented. Next steps:
 - Train or fine-tune a Bangla language model
 - Integrate NLP into the stage pipeline
 
-## Notes
-
-- Large model/video artifacts are excluded via `.gitignore`.
-- Use stage 8 to validate GPU, PyTorch, and Ultralytics before training.
 
 ## License
 
