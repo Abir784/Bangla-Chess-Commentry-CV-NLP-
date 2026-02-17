@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+venv/
+venv_gpu/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Generated ML artifacts
+runs/
+output/
+inference_results/
+preprocessed_frames/
+normalized_boards/
+
+# Large media and model binaries
+videos/
+*.mp4
+*.pt
+*.onnx
+*.engine
+*.torchscript
+*.tflite
+
+# Datasets generated during prep/training
+datasets/chess_yolo/images/
+datasets/chess_yolo/labels/
